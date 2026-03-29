@@ -60,19 +60,24 @@ def _is_geom(val) -> bool:
     return s.startswith("POINT(") or s.startswith("POLYGON(") or s.startswith("MULTI")
 
 
-def _run_query(sql: str) -> str:
+def _run_query(sql: str) -> tuple[str, list[dict]]:
     conn = get_connection()
     result = conn.execute(sql)
     cols = [desc[0] for desc in result.description]
     rows = result.fetchall()
     if not rows:
-        return "לא נמצאו תוצאות."
+        return "לא נמצאו תוצאות.", []
 
     # Filter out geometry columns based on first row values
     keep = [i for i, v in enumerate(rows[0]) if not _is_geom(v)]
-    cols = [cols[i] for i in keep]
+    filtered_cols = [cols[i] for i in keep]
 
-    header = " | ".join(cols)
+    data = [
+        {filtered_cols[j]: row[keep[j]] for j in range(len(filtered_cols))}
+        for row in rows
+    ]
+
+    header = " | ".join(filtered_cols)
     lines = [header, "-" * len(header)]
     truncated = len(rows) > MAX_RESULT_ROWS
     for row in rows[:MAX_RESULT_ROWS]:
@@ -83,7 +88,7 @@ def _run_query(sql: str) -> str:
     text = "\n".join(lines)
     if len(text) > MAX_RESULT_CHARS:
         text = text[:MAX_RESULT_CHARS] + "\n(... תוצאות קוצצו)"
-    return text
+    return text, data
 
 
 def _format_answer(question: str, sql: str, results: str) -> str:
@@ -93,27 +98,29 @@ def _format_answer(question: str, sql: str, results: str) -> str:
 
 def ask(question: str) -> dict:
     """Full pipeline: question -> SQL -> execute -> answer.
-    Returns dict with sql, results, and answer."""
+    Returns dict with sql, results (formatted text), results_data (list of dicts), and answer."""
 
     try:
         sql = _generate_sql(question)
     except APIError as e:
-        return {"sql": None, "results": None, "answer": f"שגיאת API: {e.message}"}
+        return {"sql": None, "results": None, "results_data": [], "answer": f"שגיאת API: {e.message}"}
 
+    results_data: list[dict] = []
     for attempt in range(1 + MAX_SQL_RETRIES):
         try:
-            results = _run_query(sql)
+            results, results_data = _run_query(sql)
             break
         except Exception as e:
             if attempt < MAX_SQL_RETRIES:
                 try:
                     sql = _generate_sql(question, error_context=f"SQL: {sql}\nError: {e}")
                 except APIError as api_err:
-                    return {"sql": sql, "results": None, "answer": f"שגיאת API: {api_err.message}"}
+                    return {"sql": sql, "results": None, "results_data": [], "answer": f"שגיאת API: {api_err.message}"}
             else:
                 return {
                     "sql": sql,
                     "results": None,
+                    "results_data": [],
                     "answer": f"לא הצלחתי להריץ את השאילתה. שגיאה: {e}",
                 }
 
@@ -130,4 +137,4 @@ def ask(question: str) -> dict:
             answer = f"שגיאת API: {e.message}"
     except APIError as e:
         answer = f"שגיאת API: {e.message}"
-    return {"sql": sql, "results": results, "answer": answer}
+    return {"sql": sql, "results": results, "results_data": results_data, "answer": answer}

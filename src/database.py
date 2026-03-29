@@ -8,7 +8,7 @@ _conn: duckdb.DuckDBPyConnection | None = None
 def get_connection() -> duckdb.DuckDBPyConnection:
     global _conn
     if _conn is None:
-        raise RuntimeError("Database not initialized. Call init_db() first.")
+        init_db()
     return _conn
 
 
